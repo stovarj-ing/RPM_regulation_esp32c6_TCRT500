@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS 
+        "main.c"
+        "control.c"
+        "motor.c"
+        "pid.c"
+        "rpm.c"
+    INCLUDE_DIRS 
+        "."
+    REQUIRES 
+        driver
+        esp_timer
+)

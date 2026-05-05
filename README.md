@@ -1,0 +1,158 @@
+# RPM Motor Control
+
+ESP-IDF firmware for closed-loop DC motor speed control on an ESP32-C6. The project measures motor speed from a pulse sensor, filters the RPM signal, computes a PID correction, and drives a motor driver through PWM and two direction pins.
+
+The application is intentionally split into small modules so the control path is easy to inspect and tune:
+
+- `main.c` initializes the motor driver, RPM sensor, and FreeRTOS control task.
+- `motor.c` configures LEDC PWM output and GPIO direction control.
+- `rpm.c` counts sensor pulses with a GPIO interrupt and converts them to RPM.
+- `pid.c` implements a simple proportional-integral-derivative controller.
+- `control.c` runs the periodic feedback loop and applies the PID output to the motor.
+- `config.h` centralizes pin assignments and control constants.
+
+## Features
+
+- Closed-loop RPM regulation using a PID controller.
+- PWM motor speed control through the ESP-IDF LEDC driver.
+- Direction control using two digital GPIO outputs.
+- Interrupt-based pulse counting for RPM measurement.
+- Basic pulse debounce/noise rejection in the interrupt handler.
+- Exponential smoothing filter for RPM readings.
+- Periodic logging of measured RPM and controller output.
+
+## Hardware
+
+The firmware is configured for an ESP32-C6 target and expects:
+
+- ESP32-C6 development board.
+- DC motor.
+- H-bridge or motor driver with one PWM input and two direction inputs.
+- RPM sensor that generates one or more digital pulses per motor revolution.
+- External motor power supply sized for the motor and driver.
+- Common ground between the ESP32-C6, motor driver, sensor, and motor supply.
+
+## Pinout
+
+Default pin assignments are defined in `main/config.h`.
+
+| Signal | GPIO | Description |
+| --- | ---: | --- |
+| `PIN_PWM` | 4 | PWM output to the motor driver speed input |
+| `PIN_IN1` | 5 | Motor driver direction input 1 |
+| `PIN_IN2` | 6 | Motor driver direction input 2 |
+| `PIN_SENSOR` | 1 | RPM sensor pulse input |
+
+The RPM input is configured to trigger on the negative edge. If your sensor produces active-high pulses or needs pull-up/pull-down configuration, adjust `rpm_init()` in `main/rpm.c`.
+
+## Control Parameters
+
+The main control constants live in `main/config.h`.
+
+| Constant | Current value | Purpose |
+| --- | ---: | --- |
+| `PWM_FREQ` | `20000` | PWM frequency in Hz |
+| `PWM_RES` | `LEDC_TIMER_8_BIT` | PWM resolution, giving a duty range from 0 to 255 |
+| `SAMPLE_TIME_MS` | `100` | Control loop period |
+| `PULSES_PER_REV` | `1` | Sensor pulses generated per full motor revolution |
+
+The PID gains and target speed are currently set in `main/control.c`:
+
+```c
+pid_init(&pid, 0.5, 0.1, 0.01);
+float setpoint = 1000;
+```
+
+Tune `Kp`, `Ki`, `Kd`, and `setpoint` according to your motor, load, sensor resolution, and power stage. The controller output is limited to the 8-bit PWM range used by the LEDC channel.
+
+## How It Works
+
+1. `app_main()` initializes the motor module and sets the default direction.
+2. `rpm_init()` configures the sensor GPIO interrupt and starts the measurement timer.
+3. `control_task()` runs every `SAMPLE_TIME_MS`.
+4. The task reads the filtered RPM value from `rpm_get()`.
+5. `pid_compute()` compares the measured RPM against the setpoint and calculates a PWM duty command.
+6. The motor direction and speed are applied with `motor_set_direction()` and `motor_set_speed()`.
+7. The firmware logs the current RPM, raw PID output, and duty value through the ESP-IDF logging system.
+
+RPM is calculated from the number of pulses accumulated over the elapsed time:
+
+```text
+RPM = (pulse_count / elapsed_seconds) * (60 / PULSES_PER_REV)
+```
+
+An exponential filter is applied to reduce measurement jitter:
+
+```text
+filtered = alpha * current_rpm + (1 - alpha) * previous_filtered
+```
+
+The current filter coefficient is `0.2` in `main/rpm.c`.
+
+## Build and Flash
+
+Install and export ESP-IDF before building. This project was last generated with ESP-IDF `5.5.3` and target `esp32c6`, according to `dependencies.lock`.
+
+Set the target:
+
+```bash
+idf.py set-target esp32c6
+```
+
+Build the firmware:
+
+```bash
+idf.py build
+```
+
+Flash and monitor the board:
+
+```bash
+idf.py -p PORT flash monitor
+```
+
+Replace `PORT` with the serial port for your board, for example `COM5` on Windows or `/dev/ttyUSB0` on Linux. To leave the monitor, press `Ctrl+]`.
+
+## Expected Serial Output
+
+During operation, the control task prints periodic feedback similar to:
+
+```text
+I (1234) PID: RPM: 842.15 | OUT: 78.42 | DUTY: 78
+```
+
+The values depend on the motor, sensor, load, PID tuning, and setpoint.
+
+## Project Layout
+
+```text
+.
+|-- CMakeLists.txt
+|-- dependencies.lock
+|-- main
+|   |-- CMakeLists.txt
+|   |-- config.h
+|   |-- control.c / control.h
+|   |-- main.c
+|   |-- motor.c / motor.h
+|   |-- pid.c / pid.h
+|   `-- rpm.c / rpm.h
+`-- sdkconfig.defaults*
+```
+
+## Calibration Notes
+
+- Set `PULSES_PER_REV` to match the physical sensor or encoder.
+- Confirm the interrupt edge in `rpm_init()` matches the sensor output.
+- Adjust or remove the 2 ms pulse rejection window in `isr_handler()` if the motor can produce valid pulses faster than that.
+- Start PID tuning with a low `Kp`, then introduce `Ki` and `Kd` gradually.
+- Make sure the motor driver accepts 3.3 V ESP32 GPIO logic, or use level shifting if required.
+- Verify that the motor power supply can handle startup current without resetting the ESP32-C6.
+
+## Troubleshooting
+
+- No RPM reading: check the sensor wiring, signal level, interrupt edge, and `PULSES_PER_REV`.
+- Motor does not move: check the driver enable pins, motor supply, PWM pin, and direction pins.
+- Unstable speed: reduce PID gains, increase filtering, or improve sensor signal quality.
+- RPM is scaled incorrectly: update `PULSES_PER_REV` to the actual number of pulses per revolution.
+- ESP32 resets when the motor starts: separate logic and motor power appropriately and keep grounds common.
