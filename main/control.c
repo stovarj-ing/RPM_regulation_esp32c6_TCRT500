@@ -1,6 +1,7 @@
 #include "control.h"
 #include "pid.h"
 #include "motor.h"
+#include "oled.h"
 #include "rpm.h"
 #include "config.h"
 #include "freertos/FreeRTOS.h"
@@ -8,15 +9,38 @@
 #include "esp_log.h"
 #include <math.h>
 
+static portMUX_TYPE setpoint_lock = portMUX_INITIALIZER_UNLOCKED;
+static float rpm_setpoint = DEFAULT_RPM_SETPOINT;
+
+void control_set_setpoint(float rpm) {
+    if (rpm < MIN_RPM_SETPOINT) {
+        rpm = MIN_RPM_SETPOINT;
+    }
+    if (rpm > MAX_RPM_SETPOINT) {
+        rpm = MAX_RPM_SETPOINT;
+    }
+
+    portENTER_CRITICAL(&setpoint_lock);
+    rpm_setpoint = rpm;
+    portEXIT_CRITICAL(&setpoint_lock);
+}
+
+float control_get_setpoint(void) {
+    float rpm;
+    portENTER_CRITICAL(&setpoint_lock);
+    rpm = rpm_setpoint;
+    portEXIT_CRITICAL(&setpoint_lock);
+    return rpm;
+}
+
 void control_task(void *arg) {
     pid_t pid;
     pid_init(&pid, 0.5, 0.1, 0.01);
 
-    float setpoint = 1000; // RPM objetivo
-
     static const char *TAG = "PID";
     while (1) {
         float current_rpm = rpm_get();
+        float setpoint = control_get_setpoint();
 
         float output = pid_compute(&pid, setpoint, current_rpm, 0.1);
 
@@ -32,9 +56,11 @@ void control_task(void *arg) {
         // Aplicar
         motor_set_direction(dir);
         motor_set_speed((uint8_t)duty_f);
+        oled_show_tachometer(current_rpm, setpoint, duty_f);
         
-        ESP_LOGI(TAG, "RPM: %.2f | OUT: %.2f | DUTY: %d",
+        ESP_LOGI(TAG, "RPM: %.2f | REF: %.2f | OUT: %.2f | DUTY: %d",
          current_rpm,
+         setpoint,
          output,
          (int)output);
 

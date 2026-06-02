@@ -9,6 +9,8 @@ The application is intentionally split into small modules so the control path is
 - `rpm.c` counts sensor pulses with a GPIO interrupt and converts them to RPM.
 - `pid.c` implements a simple proportional-integral-derivative controller.
 - `control.c` runs the periodic feedback loop and applies the PID output to the motor.
+- `oled.c` drives a 128x64 SSD1306 OLED over I2C and renders the tachometer view.
+- `uart_cmd.c` reads serial commands to update the desired RPM reference.
 - `config.h` centralizes pin assignments and control constants.
 
 ## Features
@@ -20,6 +22,8 @@ The application is intentionally split into small modules so the control path is
 - Basic pulse debounce/noise rejection in the interrupt handler.
 - Exponential smoothing filter for RPM readings.
 - Periodic logging of measured RPM and controller output.
+- SSD1306 OLED tachometer interface with measured and target RPM.
+- UART command input for changing the RPM setpoint while the firmware is running.
 
 ## Hardware
 
@@ -42,8 +46,12 @@ Default pin assignments are defined in `main/config.h`.
 | `PIN_IN1` | 5 | Motor driver direction input 1 |
 | `PIN_IN2` | 6 | Motor driver direction input 2 |
 | `PIN_SENSOR` | 1 | RPM sensor pulse input |
+| `OLED_I2C_SDA` | 8 | SSD1306 I2C data |
+| `OLED_I2C_SCL` | 9 | SSD1306 I2C clock |
 
 The RPM input is configured to trigger on the negative edge. If your sensor produces active-high pulses or needs pull-up/pull-down configuration, adjust `rpm_init()` in `main/rpm.c`.
+
+The OLED defaults to I2C address `0x3C` at 400 kHz. If your display uses address `0x3D`, update `OLED_I2C_ADDR` in `main/config.h`.
 
 ## Control Parameters
 
@@ -55,15 +63,28 @@ The main control constants live in `main/config.h`.
 | `PWM_RES` | `LEDC_TIMER_8_BIT` | PWM resolution, giving a duty range from 0 to 255 |
 | `SAMPLE_TIME_MS` | `100` | Control loop period |
 | `PULSES_PER_REV` | `1` | Sensor pulses generated per full motor revolution |
+| `DEFAULT_RPM_SETPOINT` | `1000.0f` | Initial desired RPM reference |
+| `MAX_RPM_SETPOINT` | `9000.0f` | Maximum accepted desired RPM for the 9 V DC motor |
 
-The PID gains and target speed are currently set in `main/control.c`:
+The PID gains are currently set in `main/control.c`:
 
 ```c
 pid_init(&pid, 0.5, 0.1, 0.01);
-float setpoint = 1000;
 ```
 
-Tune `Kp`, `Ki`, `Kd`, and `setpoint` according to your motor, load, sensor resolution, and power stage. The controller output is limited to the 8-bit PWM range used by the LEDC channel.
+Tune `Kp`, `Ki`, `Kd`, and the RPM reference according to your motor, load, sensor resolution, and power stage. The controller output is limited to the 8-bit PWM range used by the LEDC channel.
+
+## UART RPM Command
+
+Open the ESP-IDF serial monitor and send one of these commands followed by Enter:
+
+```text
+rpm 1500
+set 1500
+ref=1500
+```
+
+The value is interpreted as the desired RPM reference. Valid values are from `0` to `9000` RPM.
 
 ## How It Works
 
@@ -73,7 +94,8 @@ Tune `Kp`, `Ki`, `Kd`, and `setpoint` according to your motor, load, sensor reso
 4. The task reads the filtered RPM value from `rpm_get()`.
 5. `pid_compute()` compares the measured RPM against the setpoint and calculates a PWM duty command.
 6. The motor direction and speed are applied with `motor_set_direction()` and `motor_set_speed()`.
-7. The firmware logs the current RPM, raw PID output, and duty value through the ESP-IDF logging system.
+7. The OLED displays a tachometer needle, measured RPM, target RPM, and a small duty bar.
+8. The firmware logs the current RPM, target RPM, raw PID output, and duty value through the ESP-IDF logging system.
 
 RPM is calculated from the number of pulses accumulated over the elapsed time:
 
@@ -118,7 +140,7 @@ Replace `PORT` with the serial port for your board, for example `COM5` on Window
 During operation, the control task prints periodic feedback similar to:
 
 ```text
-I (1234) PID: RPM: 842.15 | OUT: 78.42 | DUTY: 78
+I (1234) PID: RPM: 842.15 | REF: 1000.00 | OUT: 78.42 | DUTY: 78
 ```
 
 The values depend on the motor, sensor, load, PID tuning, and setpoint.
@@ -135,7 +157,9 @@ The values depend on the motor, sensor, load, PID tuning, and setpoint.
 |   |-- control.c / control.h
 |   |-- main.c
 |   |-- motor.c / motor.h
+|   |-- oled.c / oled.h
 |   |-- pid.c / pid.h
+|   |-- uart_cmd.c / uart_cmd.h
 |   `-- rpm.c / rpm.h
 `-- sdkconfig.defaults*
 ```

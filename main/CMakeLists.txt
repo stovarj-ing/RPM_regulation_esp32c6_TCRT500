@@ -3,8 +3,10 @@ idf_component_register(
         "main.c"
         "control.c"
         "motor.c"
+        "oled.c"
         "pid.c"
         "rpm.c"
+        "uart_cmd.c"
     INCLUDE_DIRS 
         "."
     REQUIRES 
