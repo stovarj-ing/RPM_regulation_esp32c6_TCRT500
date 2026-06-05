@@ -3,9 +3,11 @@
 #include "esp_timer.h"
 #include "esp_attr.h"     
 #include "config.h"
+#include "freertos/FreeRTOS.h"
 #define FILTER_ALPHA 0.2
 static float rpm_filtered = 0;
 static volatile int pulse_count = 0;
+static portMUX_TYPE pulse_lock = portMUX_INITIALIZER_UNLOCKED;
 static int64_t last_time = 0;
 static float rpm = 0;
 
@@ -16,7 +18,9 @@ static void IRAM_ATTR isr_handler(void* arg) {
 
     // Ignorar pulsos menores a 2 ms (ajústalo luego)
     if ((now - last_pulse_time) > 2000) {
+        portENTER_CRITICAL_ISR(&pulse_lock);
         pulse_count++;
+        portEXIT_CRITICAL_ISR(&pulse_lock);
         last_pulse_time = now;
     }
 }
@@ -36,12 +40,17 @@ float rpm_get(void) {
     float dt = (now - last_time) / 1000000.0;
 
    if (dt >= 0.1) {
-        rpm = (pulse_count / dt) * (60.0 / PULSES_PER_REV);
+        int pulses;
+        portENTER_CRITICAL(&pulse_lock);
+        pulses = pulse_count;
+        pulse_count = 0;
+        portEXIT_CRITICAL(&pulse_lock);
+
+        rpm = (pulses / dt) * (60.0 / PULSES_PER_REV);
 
         // Filtro exponencial
         rpm_filtered = FILTER_ALPHA * rpm + (1 - FILTER_ALPHA) * rpm_filtered;
 
-        pulse_count = 0;
         last_time = now;
     }
 

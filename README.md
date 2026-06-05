@@ -24,6 +24,32 @@ The application is intentionally split into small modules so the control path is
 - Periodic logging of measured RPM and controller output.
 - SSD1306 OLED tachometer interface with measured and target RPM.
 - UART command input for changing the RPM setpoint while the firmware is running.
+- WiFi station mode with an embedded HTTP server for browser-based monitoring and setpoint control.
+- Modern embedded web UI with RPM history, live gauge, JSON API, CSS, JavaScript, and SVG icon.
+
+## Technical Review and HTTP Connectivity
+
+A deeper Spanish-language review is available in [`docs/revision-proyecto.md`](docs/revision-proyecto.md). It covers the firmware architecture, PID and RPM measurement risks, configuration cleanup items, and the HTTP connectivity design.
+
+HTTP support is implemented with a lightweight ESP-IDF HTTP server on the ESP32-C6. UART remains available as the local fallback interface. The web app is served directly by the firmware:
+
+| Route | Content |
+| --- | --- |
+| `/` | Main HTML dashboard |
+| `/styles.css` | Embedded modern CSS |
+| `/app.js` | Browser-side polling, setpoint form, and RPM history chart |
+| `/icon.svg` | SVG icon and favicon |
+
+The JSON API exposes:
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Check that the firmware HTTP server is alive |
+| `GET` | `/api/status` | Read measured RPM, current setpoint, and control limits |
+| `GET` | `/api/setpoint` | Read the current RPM reference |
+| `POST` | `/api/setpoint` | Update the RPM reference after range validation |
+
+The RPM history is maintained in the browser, so the ESP32 only serves the latest control snapshot. Configure WiFi credentials with `idf.py menuconfig` under `RPM Motor Control`; if the SSID is empty, the firmware keeps running without HTTP.
 
 ## Hardware
 
@@ -86,6 +112,24 @@ ref=1500
 
 The value is interpreted as the desired RPM reference. Valid values are from `0` to `9000` RPM.
 
+## HTTP Web Dashboard
+
+After configuring WiFi and flashing the firmware, open the IP printed in the serial monitor. The dashboard provides:
+
+- Live RPM gauge.
+- Current setpoint, PID output, and PWM duty.
+- RPM history chart refreshed every second.
+- Numeric input for the desired RPM reference.
+- Embedded SVG icon section and favicon.
+
+You can also use the API directly:
+
+```bash
+curl http://ESP_IP/health
+curl http://ESP_IP/api/status
+curl -X POST http://ESP_IP/api/setpoint -H "Content-Type: application/json" -d "{\"rpm\":1500}"
+```
+
 ## How It Works
 
 1. `app_main()` initializes the motor module and sets the default direction.
@@ -95,7 +139,9 @@ The value is interpreted as the desired RPM reference. Valid values are from `0`
 5. `pid_compute()` compares the measured RPM against the setpoint and calculates a PWM duty command.
 6. The motor direction and speed are applied with `motor_set_direction()` and `motor_set_speed()`.
 7. The OLED displays a tachometer needle, measured RPM, target RPM, and a small duty bar.
-8. The firmware logs the current RPM, target RPM, raw PID output, and duty value through the ESP-IDF logging system.
+8. The control module stores a thread-safe status snapshot for HTTP reads.
+9. If WiFi is configured, the firmware starts the HTTP server and serves the dashboard/API.
+10. The firmware logs the current RPM, target RPM, raw PID output, and duty value through the ESP-IDF logging system.
 
 RPM is calculated from the number of pulses accumulated over the elapsed time:
 
@@ -160,6 +206,8 @@ The values depend on the motor, sensor, load, PID tuning, and setpoint.
 |   |-- oled.c / oled.h
 |   |-- pid.c / pid.h
 |   |-- uart_cmd.c / uart_cmd.h
+|   |-- wifi_connect.c / wifi_connect.h
+|   |-- http_server.c / http_server.h
 |   `-- rpm.c / rpm.h
 `-- sdkconfig.defaults*
 ```

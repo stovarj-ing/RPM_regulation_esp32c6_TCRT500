@@ -7,9 +7,17 @@ idf_component_register(
         "pid.c"
         "rpm.c"
         "uart_cmd.c"
+        "wifi_connect.c"
+        "http_server.c"
     INCLUDE_DIRS 
         "."
     REQUIRES 
         driver
         esp_timer
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_server
+        nvs_flash
+        json
 )

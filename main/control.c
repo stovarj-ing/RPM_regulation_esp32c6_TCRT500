@@ -11,6 +11,9 @@
 
 static portMUX_TYPE setpoint_lock = portMUX_INITIALIZER_UNLOCKED;
 static float rpm_setpoint = DEFAULT_RPM_SETPOINT;
+static float last_rpm = 0.0f;
+static float last_output = 0.0f;
+static float last_duty = 0.0f;
 
 void control_set_setpoint(float rpm) {
     if (rpm < MIN_RPM_SETPOINT) {
@@ -33,6 +36,22 @@ float control_get_setpoint(void) {
     return rpm;
 }
 
+void control_get_status(control_status_t *status) {
+    if (status == NULL) {
+        return;
+    }
+
+    portENTER_CRITICAL(&setpoint_lock);
+    status->rpm = last_rpm;
+    status->setpoint = rpm_setpoint;
+    status->output = last_output;
+    status->duty = last_duty;
+    portEXIT_CRITICAL(&setpoint_lock);
+
+    status->min_setpoint = MIN_RPM_SETPOINT;
+    status->max_setpoint = MAX_RPM_SETPOINT;
+}
+
 void control_task(void *arg) {
     pid_t pid;
     pid_init(&pid, 0.5, 0.1, 0.01);
@@ -42,7 +61,7 @@ void control_task(void *arg) {
         float current_rpm = rpm_get();
         float setpoint = control_get_setpoint();
 
-        float output = pid_compute(&pid, setpoint, current_rpm, 0.1);
+        float output = pid_compute(&pid, setpoint, current_rpm, SAMPLE_TIME_MS / 1000.0f);
 
         // Dirección
         int dir = (output >= 0) ? 1 : -1;
@@ -57,6 +76,12 @@ void control_task(void *arg) {
         motor_set_direction(dir);
         motor_set_speed((uint8_t)duty_f);
         oled_show_tachometer(current_rpm, setpoint, duty_f);
+
+        portENTER_CRITICAL(&setpoint_lock);
+        last_rpm = current_rpm;
+        last_output = output;
+        last_duty = duty_f;
+        portEXIT_CRITICAL(&setpoint_lock);
         
         ESP_LOGI(TAG, "RPM: %.2f | REF: %.2f | OUT: %.2f | DUTY: %d",
          current_rpm,

@@ -3,6 +3,8 @@
 #include "control.h"
 #include "oled.h"
 #include "uart_cmd.h"
+#include "wifi_connect.h"
+#include "http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -26,4 +28,10 @@ void app_main(void) {
     uart_cmd_init();
 
     xTaskCreate(control_task, "control_task", 4096, NULL, 5, NULL);
+
+    if (wifi_connect_sta() == ESP_OK) {
+        ESP_ERROR_CHECK(rpm_http_server_start());
+    } else {
+        ESP_LOGW(TAG, "HTTP no iniciado; configure WiFi en menuconfig para habilitarlo");
+    }
 }
