@@ -3,6 +3,7 @@
 #include "config.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,12 +17,16 @@
 #define OLED_HEIGHT 64
 #define OLED_PAGES 8
 #define OLED_BUFFER_SIZE (OLED_WIDTH * OLED_PAGES)
+#define OLED_PAGE_PACKET_SIZE (OLED_WIDTH + 1)
+#define OLED_REFRESH_INTERVAL_US 250000
 
 static const char *TAG = "OLED";
 static i2c_master_bus_handle_t i2c_bus;
 static i2c_master_dev_handle_t oled_dev;
 static uint8_t framebuffer[OLED_BUFFER_SIZE];
 static bool oled_ready;
+static int64_t last_refresh_us;
+static int64_t last_error_log_us;
 
 static esp_err_t oled_write_command(uint8_t command) {
     uint8_t data[] = {0x00, command};
@@ -44,20 +49,45 @@ static esp_err_t oled_flush(void) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    uint8_t commands[] = {
-        0x21, 0x00, OLED_WIDTH - 1,
-        0x22, 0x00, OLED_PAGES - 1,
-    };
-    ESP_RETURN_ON_ERROR(oled_write_commands(commands, sizeof(commands)), TAG, "range");
+    uint8_t packet[OLED_PAGE_PACKET_SIZE];
+    packet[0] = 0x40;
 
-    uint8_t chunk[17];
-    chunk[0] = 0x40;
-    for (size_t offset = 0; offset < OLED_BUFFER_SIZE; offset += 16) {
-        memcpy(&chunk[1], &framebuffer[offset], 16);
-        ESP_RETURN_ON_ERROR(i2c_master_transmit(oled_dev, chunk, sizeof(chunk), pdMS_TO_TICKS(100)), TAG, "data");
+    for (uint8_t page = 0; page < OLED_PAGES; page++) {
+        const uint8_t commands[] = {
+            (uint8_t)(0xB0 | page),
+            0x00,
+            0x10,
+        };
+        esp_err_t err = oled_write_commands(commands, sizeof(commands));
+        if (err != ESP_OK) {
+            return err;
+        }
+
+        memcpy(&packet[1], &framebuffer[page * OLED_WIDTH], OLED_WIDTH);
+        err = i2c_master_transmit(oled_dev, packet, sizeof(packet), pdMS_TO_TICKS(200));
+        if (err != ESP_OK) {
+            return err;
+        }
     }
 
     return ESP_OK;
+}
+
+static void oled_log_flush_error(esp_err_t err) {
+    int64_t now = esp_timer_get_time();
+    if (now - last_error_log_us >= 1000000) {
+        ESP_LOGW(TAG, "No se pudo actualizar la pantalla: %s", esp_err_to_name(err));
+        last_error_log_us = now;
+    }
+}
+
+static void oled_commit_frame(void) {
+    esp_err_t err = oled_flush();
+    if (err == ESP_OK) {
+        last_refresh_us = esp_timer_get_time();
+    } else {
+        oled_log_flush_error(err);
+    }
 }
 
 static void oled_clear(void) {
@@ -255,11 +285,16 @@ void oled_show_splash(void) {
     oled_draw_centered_text(8, "CONTROL PID", 1);
     oled_draw_centered_text(24, "TACOMETRO", 1);
     oled_draw_centered_text(42, "OLED READY", 1);
-    oled_flush();
+    oled_commit_frame();
 }
 
 void oled_show_tachometer(float measured_rpm, float setpoint_rpm, float duty) {
     if (!oled_ready) {
+        return;
+    }
+
+    int64_t now = esp_timer_get_time();
+    if (last_refresh_us != 0 && now - last_refresh_us < OLED_REFRESH_INTERVAL_US) {
         return;
     }
 
@@ -279,5 +314,5 @@ void oled_show_tachometer(float measured_rpm, float setpoint_rpm, float duty) {
     int bar_w = (int)roundf(clampf(duty / 255.0f, 0.0f, 1.0f) * OLED_WIDTH);
     oled_fill_rect(0, 63, bar_w, 1);
 
-    oled_flush();
+    oled_commit_frame();
 }

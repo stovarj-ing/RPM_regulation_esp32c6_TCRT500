@@ -3,14 +3,14 @@
 // Pines22
 #define PIN_PWM     4
 #define PIN_IN1     5
-#define PIN_IN2     6
+#define PIN_IN2     8
 #define PIN_SENSOR  1
 
 // OLED SSD1306 I2C
-#define OLED_I2C_SDA      8
-#define OLED_I2C_SCL      9
+#define OLED_I2C_SDA      6
+#define OLED_I2C_SCL      7
 #define OLED_I2C_ADDR     0x3C
-#define OLED_I2C_FREQ_HZ  400000
+#define OLED_I2C_FREQ_HZ  100000
 
 // PWM
 #define PWM_FREQ    20000

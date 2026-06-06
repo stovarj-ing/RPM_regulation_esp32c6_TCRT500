@@ -64,13 +64,15 @@ void control_task(void *arg) {
         float output = pid_compute(&pid, setpoint, current_rpm, SAMPLE_TIME_MS / 1000.0f);
 
         // Dirección
-        int dir = (output >= 0) ? 1 : -1;
+        int dir = 1;
 
         // Magnitud
-        float duty_f = fabs(output);
+        float duty_f = fabsf(output);
 
         // Saturación
-        if (duty_f > 255) duty_f = 255;
+        if (duty_f > 255.0f) {
+            duty_f = 255.0f;
+        }
 
         // Aplicar
         motor_set_direction(dir);
@@ -87,7 +89,7 @@ void control_task(void *arg) {
          current_rpm,
          setpoint,
          output,
-         (int)output);
+         (int)duty_f);
 
         vTaskDelay(pdMS_TO_TICKS(SAMPLE_TIME_MS));
         //vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay adicional para evitar saturación del log
